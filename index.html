@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Husky Sled</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #0A1020; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+  canvas { display: block; }
+
+  #hud {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+  }
+
+  #score-display {
+    position: absolute;
+    top: 20px; right: 24px;
+    color: #fff;
+    font-size: 24px;
+    font-weight: bold;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  }
+
+  #overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    transition: background-color 0.3s;
+  }
+
+  #overlay.dimmed {
+    background-color: rgba(0, 0, 0, 0.4);
+  }
+
+  #overlay.paused {
+    background-color: rgba(0, 0, 0, 0.25);
+  }
+
+  #overlay-title {
+    font-size: 56px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 4px 20px rgba(30, 180, 100, 0.3);
+    margin-bottom: 8px;
+  }
+
+  #overlay-subtitle {
+    font-size: 22px;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    margin-bottom: 16px;
+  }
+
+  #overlay-score {
+    font-size: 32px;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    margin-bottom: 12px;
+    display: none;
+  }
+
+  #overlay-prompt {
+    font-size: 20px;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1.0; }
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="score-display" class="hidden">Lap 1/3 | 00:00.00</div>
+  <canvas id="minimap" width="210" height="210" style="position:absolute;bottom:20px;left:20px;border-radius:4px;background:#D4DCC0;border:1px solid rgba(120,100,70,0.5);box-shadow:0 2px 8px rgba(0,0,0,0.4);"></canvas>
+</div>
+
+<div id="overlay">
+  <div id="overlay-title">HUSKY SLED</div>
+  <div id="overlay-subtitle">3-Lap Circuit Race</div>
+  <div id="overlay-score"></div>
+  <div id="overlay-prompt">Press SPACE to start</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ============================================================
+//  HUSKY SLED - 3D Low-Poly Racing Circuit
+// ============================================================
+
+// --- DOM refs ---
+const scoreDisplay = document.getElementById('score-display');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlay-title');
+const overlaySubtitle = document.getElementById('overlay-subtitle');
+const overlayScore = document.getElementById('overlay-score');
+const overlayPrompt = document.getElementById('overlay-prompt');
+
+const minimapCanvas = document.getElementById('minimap');
+const minimapCtx = minimapCanvas.getContext('2d');
+
+// --- Game states ---
+const STATE = { TITLE: 0, PLAYING: 1, GAME_OVER: 2, PAUSED: 3 };
+let gameState = STATE.TITLE;
+let speed = 0.3;
+const baseSpeed = 0.22;
+const maxSpeed = 0.6;
+let elapsedTime = 0;
+
+// --- Racing state ---
+let distanceAlongTrack = 0;
+let lateralOffset = 0;
+let currentLap = 1;
+const TOTAL_LAPS = 3;
+let lapTime = 0;
+let bestLapTime = Infinity;
+let totalRaceTime = 0;
+const MAX_HITS = 3;
+let hitCount = 0;
+let hitCooldown = 0; // invulnerability timer after hit
+
+// --- Sled physics ---
+let lateralVelocity = 0;
+let steerAngle = 0;
+let sledRoll = 0;
+let sledPitch = 0;
+let prevLateralVelocity = 0;
+let sledLateralOffset = 0;
+let sledLateralVelocity = 0;
+const TETHER_LENGTH = 2.5;
+
+// --- Perlin Noise ---
+const _p = [];
+(function() {
+  const perm = [151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180];
+  for (let i = 0; i < 256; i++) _p[i] = _p[i + 256] = perm[i];
+})();
+function _fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+function _lerp(a, b, t) { return a + t * (b - a); }
+function _grad(hash, x, y) {
+  const h = hash & 3;
+  const u = h < 2 ? x : y;
+  const v = h < 2 ? y : x;
+  return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+}
+function noise2D(x, y) {
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  x -= Math.floor(x); y -= Math.floor(y);
+  const u = _fade(x), v = _fade(y);
+  const A = _p[X] + Y, B = _p[X + 1] + Y;
+  return _lerp(
+    _lerp(_grad(_p[A], x, y), _grad(_p[B], x - 1, y), u),
+    _lerp(_grad(_p[A + 1], x, y - 1), _grad(_p[B + 1], x - 1, y - 1), u),
+    v
+  );
+}
+
+// ============================================================
+//  TRACK GENERATION (CatmullRomCurve3 closed circuit)
+// ============================================================
+
+const NUM_CONTROL_POINTS = 48;
+const trackControlPoints = [];
+
+for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
+  const t = (i / NUM_CONTROL_POINTS) * Math.PI * 2;
+  // Figure-8 base (lemniscate of Bernoulli, scaled)
+  const scale = 260;
+  const denom = 1 + Math.sin(t) * Math.sin(t);
+  let x = scale * Math.cos(t) / denom;
+  let z = scale * Math.sin(t) * Math.cos(t) / denom;
+  // Add a 3rd-harmonic wobble for switchback character
+  x += Math.cos(t * 3) * 40 + Math.sin(t * 2) * 25;
+  z += Math.sin(t * 3) * 35 - Math.cos(t * 2) * 20;
+  // Perlin noise perturbation for organic irregularity
+  x += noise2D(i * 0.35, 0.0) * 50 + noise2D(i * 0.7, 3.0) * 20;
+  z += noise2D(i * 0.35, 7.0) * 50 + noise2D(i * 0.7, 10.0) * 20;
+  // Elevation from Perlin noise
+  const y = noise2D(i * 0.5, 5.0) * 5 + noise2D(i * 0.25, 8.0) * 4 + 3;
+  trackControlPoints.push(new THREE.Vector3(x, y, z));
+}
+
+const trackSpline = new THREE.CatmullRomCurve3(trackControlPoints, true, 'catmullrom', 0.5);
+const trackTotalLength = trackSpline.getLength();
+
+// ============================================================
+//  PROCEDURAL AUDIO (Web Audio API)
+// ============================================================
+
+let audioCtx = null;
+let audioInitialized = false;
+let sledNoiseNode = null;
+let sledGain = null;
+let windNoiseNode = null;
+let windGain = null;
+let windLfo = null;
+let windLfoGain = null;
+let masterGain = null;
+let howlTimeout = null;
+
+function initAudio() {
+  if (audioInitialized) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioInitialized = true;
+
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 1.0;
+  masterGain.connect(audioCtx.destination);
+
+  // --- Sled on snow: filtered white noise ---
+  const sledBufferSize = audioCtx.sampleRate * 2;
+  const sledBuffer = audioCtx.createBuffer(1, sledBufferSize, audioCtx.sampleRate);
+  const sledData = sledBuffer.getChannelData(0);
+  for (let i = 0; i < sledBufferSize; i++) sledData[i] = Math.random() * 2 - 1;
+
+  sledNoiseNode = audioCtx.createBufferSource();
+  sledNoiseNode.buffer = sledBuffer;
+  sledNoiseNode.loop = true;
+
+  const sledFilter = audioCtx.createBiquadFilter();
+  sledFilter.type = 'lowpass';
+  sledFilter.frequency.value = 400;
+  sledFilter.Q.value = 1;
+
+  sledGain = audioCtx.createGain();
+  sledGain.gain.value = 0;
+
+  sledNoiseNode.connect(sledFilter);
+  sledFilter.connect(sledGain);
+  sledGain.connect(masterGain);
+  sledNoiseNode.start();
+
+  // --- Wind ambience: low noise with volume oscillation ---
+  const windBuffer = audioCtx.createBuffer(1, sledBufferSize, audioCtx.sampleRate);
+  const windData = windBuffer.getChannelData(0);
+  for (let i = 0; i < sledBufferSize; i++) windData[i] = Math.random() * 2 - 1;
+
+  windNoiseNode = audioCtx.createBufferSource();
+  windNoiseNode.buffer = windBuffer;
+  windNoiseNode.loop = true;
+
+  const windFilter = audioCtx.createBiquadFilter();
+  windFilter.type = 'lowpass';
+  windFilter.frequency.value = 250;
+  windFilter.Q.value = 0.5;
+
+  windGain = audioCtx.createGain();
+  windGain.gain.value = 0;
+
+  // LFO for wind volume oscillation
+  windLfo = audioCtx.createOscillator();
+  windLfo.type = 'sine';
+  windLfo.frequency.value = 0.15;
+  windLfoGain = audioCtx.createGain();
+  windLfoGain.gain.value = 0.03;
+  windLfo.connect(windLfoGain);
+  windLfoGain.connect(windGain.gain);
+  windLfo.start();
+
+  windNoiseNode.connect(windFilter);
+  windFilter.connect(windGain);
+  windGain.connect(masterGain);
+  windNoiseNode.start();
+}
+
+function startAudioLoop() {
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  sledGain.gain.setTargetAtTime(0.20, audioCtx.currentTime, 0.3);
+  windGain.gain.setTargetAtTime(0.15, audioCtx.currentTime, 0.5);
+  scheduleHowl();
+}
+
+function stopAudioLoop() {
+  if (!audioCtx) return;
+  sledGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.2);
+  windGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+  clearTimeout(howlTimeout);
+}
+
+function pauseAudio() {
+  if (!audioCtx) return;
+  sledGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+  windGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+  clearTimeout(howlTimeout);
+}
+
+function resumeAudio() {
+  if (!audioCtx) return;
+  sledGain.gain.setTargetAtTime(0.20, audioCtx.currentTime, 0.2);
+  windGain.gain.setTargetAtTime(0.15, audioCtx.currentTime, 0.3);
+  scheduleHowl();
+}
+
+// --- Husky howl: oscillator with pitch sweep ---
+function playHowl() {
+  if (!audioCtx || gameState !== STATE.PLAYING) return;
+  const now = audioCtx.currentTime;
+  const basePitch = 300 + Math.random() * 150;
+
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  const howlGain = audioCtx.createGain();
+  howlGain.gain.value = 0;
+
+  // Add slight vibrato
+  const vibrato = audioCtx.createOscillator();
+  vibrato.type = 'sine';
+  vibrato.frequency.value = 5 + Math.random() * 3;
+  const vibratoGain = audioCtx.createGain();
+  vibratoGain.gain.value = 8;
+  vibrato.connect(vibratoGain);
+  vibratoGain.connect(osc.frequency);
+
+  osc.connect(howlGain);
+  howlGain.connect(masterGain);
+
+  // Pitch envelope: rise, hold, fall
+  osc.frequency.setValueAtTime(basePitch * 0.7, now);
+  osc.frequency.linearRampToValueAtTime(basePitch, now + 0.4);
+  osc.frequency.setValueAtTime(basePitch, now + 1.0);
+  osc.frequency.linearRampToValueAtTime(basePitch * 0.6, now + 1.8);
+
+  // Volume envelope
+  howlGain.gain.setValueAtTime(0, now);
+  howlGain.gain.linearRampToValueAtTime(0.25, now + 0.2);
+  howlGain.gain.setValueAtTime(0.25, now + 1.0);
+  howlGain.gain.linearRampToValueAtTime(0, now + 1.8);
+
+  osc.start(now);
+  osc.stop(now + 2);
+  vibrato.start(now);
+  vibrato.stop(now + 2);
+
+  scheduleHowl();
+}
+
+function scheduleHowl() {
+  clearTimeout(howlTimeout);
+  const delay = 5000 + Math.random() * 7000; // 5-12 seconds
+  howlTimeout = setTimeout(playHowl, delay);
+}
+
+// --- Collision sound: short noise burst ---
+function playCollisionSound() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  const bufferSize = audioCtx.sampleRate * 0.3;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 800;
+
+  const crashGain = audioCtx.createGain();
+  crashGain.gain.setValueAtTime(0.35, now);
+  crashGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+  src.connect(filter);
+  filter.connect(crashGain);
+  crashGain.connect(masterGain);
+  src.start(now);
+  src.stop(now + 0.3);
+}
+
+// --- Input ---
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    initAudio(); // Initialize on first user interaction
+    if (gameState === STATE.TITLE || gameState === STATE.GAME_OVER) startGame();
+    else if (gameState === STATE.PLAYING) pauseGame();
+    else if (gameState === STATE.PAUSED) resumeGame();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// --- Three.js setup ---
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0E1E30, 30, 180);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 600);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0A1020);
+document.body.insertBefore(renderer.domElement, document.body.firstChild);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- Lighting (aurora night, delicate) ---
+const ambientLight = new THREE.AmbientLight(0x4A5A7A, 0.45);
+scene.add(ambientLight);
+
+const moonLight = new THREE.DirectionalLight(0x99AACC, 0.4);
+moonLight.position.set(5, 10, -3);
+scene.add(moonLight);
+
+const auroraLight = new THREE.PointLight(0x1A6A4A, 0.15, 100);
+auroraLight.position.set(0, 20, -25);
+scene.add(auroraLight);
+
+// --- Clock ---
+const clock = new THREE.Clock();
+
+// ============================================================
+//  WORLD BUILDING
+// ============================================================
+
+// --- Sky dome (canvas-texture gradient) ---
+const skyCanvas = document.createElement('canvas');
+skyCanvas.width = 1;
+skyCanvas.height = 256;
+const skyCtx = skyCanvas.getContext('2d');
+const skyGrad = skyCtx.createLinearGradient(0, 0, 0, 256);
+skyGrad.addColorStop(0.00, '#0A1020');
+skyGrad.addColorStop(0.15, '#101840');
+skyGrad.addColorStop(0.30, '#142848');
+skyGrad.addColorStop(0.40, '#163040');
+skyGrad.addColorStop(0.48, '#265A42');
+skyGrad.addColorStop(0.52, '#204A38');
+skyGrad.addColorStop(0.58, '#163040');
+skyGrad.addColorStop(0.70, '#142848');
+skyGrad.addColorStop(0.85, '#0E1E30');
+skyGrad.addColorStop(1.00, '#0E1E30');
+skyCtx.fillStyle = skyGrad;
+skyCtx.fillRect(0, 0, 1, 256);
+const skyTexture = new THREE.CanvasTexture(skyCanvas);
+const skyGeo = new THREE.SphereGeometry(500, 32, 16);
+const skyMat = new THREE.MeshBasicMaterial({
+  map: skyTexture,
+  side: THREE.BackSide,
+  depthWrite: false
+});
+const skyDome = new THREE.Mesh(skyGeo, skyMat);
+scene.add(skyDome);
+
+// --- Stars ---
+const STAR_COUNT = 300;
+const starPositions = new Float32Array(STAR_COUNT * 3);
+for (let i = 0; i < STAR_COUNT; i++) {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.random() * Math.PI * 0.6;
+  const r = 450;
+  starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+  starPositions[i * 3 + 1] = r * Math.cos(phi);
+  starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+}
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+const starMat = new THREE.PointsMaterial({ color: 0xFFFFFF, size: 1.2, sizeAttenuation: false, transparent: true, opacity: 0.85 });
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+// --- Aurora bands ---
+for (let i = 0; i < 3; i++) {
+  const auroraCanvas = document.createElement('canvas');
+  auroraCanvas.width = 256;
+  auroraCanvas.height = 64;
+  const actx = auroraCanvas.getContext('2d');
+  const grad = actx.createLinearGradient(0, 0, 0, 64);
+  grad.addColorStop(0, 'rgba(30, 180, 100, 0)');
+  grad.addColorStop(0.3, 'rgba(30, 180, 100, ' + (0.12 - i * 0.025) + ')');
+  grad.addColorStop(0.5, 'rgba(24, 160, 90, ' + (0.18 - i * 0.04) + ')');
+  grad.addColorStop(0.7, 'rgba(30, 180, 100, ' + (0.12 - i * 0.025) + ')');
+  grad.addColorStop(1, 'rgba(30, 180, 100, 0)');
+  actx.fillStyle = grad;
+  actx.fillRect(0, 0, 256, 64);
+
+  const auroraTex = new THREE.CanvasTexture(auroraCanvas);
+  const auroraGeo = new THREE.PlaneGeometry(400, 60);
+  const auroraMat = new THREE.MeshBasicMaterial({
+    map: auroraTex, transparent: true, side: THREE.DoubleSide, depthWrite: false
+  });
+  const auroraPlane = new THREE.Mesh(auroraGeo, auroraMat);
+  const angle = (i / 3) * Math.PI * 2 / 3 + 0.5;
+  auroraPlane.position.set(Math.cos(angle) * 350, 100 + i * 30, Math.sin(angle) * 350);
+  auroraPlane.lookAt(0, 100, 0);
+  scene.add(auroraPlane);
+}
+
+// ============================================================
+//  TRACK GROUND MESH (seamless ribbon)
+// ============================================================
+
+const TRACK_WIDTH = 8;
+const TRACK_SAMPLES = Math.ceil(trackTotalLength / 2);
+const trackVertices = [];
+const trackIndices = [];
+const UP = new THREE.Vector3(0, 1, 0);
+
+for (let i = 0; i <= TRACK_SAMPLES; i++) {
+  const t = (i % TRACK_SAMPLES) / TRACK_SAMPLES;
+  const point = trackSpline.getPointAt(t);
+  const tangent = trackSpline.getTangentAt(t).normalize();
+  const perpendicular = new THREE.Vector3().crossVectors(tangent, UP).normalize();
+
+  const left = point.clone().sub(perpendicular.clone().multiplyScalar(TRACK_WIDTH / 2));
+  const right = point.clone().add(perpendicular.clone().multiplyScalar(TRACK_WIDTH / 2));
+
+  trackVertices.push(left.x, left.y - 0.05, left.z);
+  trackVertices.push(right.x, right.y - 0.05, right.z);
+
+  if (i < TRACK_SAMPLES) {
+    const idx = i * 2;
+    trackIndices.push(idx, idx + 1, idx + 2);
+    trackIndices.push(idx + 1, idx + 3, idx + 2);
+  }
+}
+
+const trackGeo = new THREE.BufferGeometry();
+trackGeo.setAttribute('position', new THREE.Float32BufferAttribute(trackVertices, 3));
+trackGeo.setIndex(trackIndices);
+trackGeo.computeVertexNormals();
+const trackMesh = new THREE.Mesh(trackGeo, new THREE.MeshLambertMaterial({ color: 0xD8E4F0, side: THREE.DoubleSide }));
+scene.add(trackMesh);
+
+// --- Reusable tree mesh factory ---
+function createTreeMesh() {
+  const group = new THREE.Group();
+
+  const trunkGeo = new THREE.CylinderGeometry(0.06, 0.1, 0.5, 6);
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6B4226 });
+  const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+  trunk.position.y = 0.25;
+  group.add(trunk);
+
+  const foliageColors = [0x264E2C, 0x3A6E40, 0x305E36];
+  const foliageData = [
+    { radius: 0.5, height: 0.7, y: 0.7 },
+    { radius: 0.38, height: 0.55, y: 1.1 },
+    { radius: 0.25, height: 0.45, y: 1.45 }
+  ];
+
+  foliageData.forEach((d, i) => {
+    const coneGeo = new THREE.ConeGeometry(d.radius, d.height, 6);
+    const coneMat = new THREE.MeshLambertMaterial({ color: foliageColors[i] });
+    const cone = new THREE.Mesh(coneGeo, coneMat);
+    cone.position.y = d.y;
+    group.add(cone);
+  });
+
+  return group;
+}
+
+// --- Rock mesh ---
+function createRockMesh() {
+  const geo = new THREE.DodecahedronGeometry(0.35, 0);
+  const mat = new THREE.MeshLambertMaterial({ color: 0x8A95A0 });
+  const rock = new THREE.Mesh(geo, mat);
+  rock.position.y = 0.3;
+  rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+  const group = new THREE.Group();
+  group.add(rock);
+  return group;
+}
+
+// ============================================================
+//  STATIC SCENERY (trees + mountains placed along track)
+// ============================================================
+
+function placeScenery() {
+  const TREE_COUNT = 200;
+  for (let i = 0; i < TREE_COUNT; i++) {
+    const dist = (i / TREE_COUNT) * trackTotalLength;
+    const t = dist / trackTotalLength;
+    const point = trackSpline.getPointAt(t);
+    const tangent = trackSpline.getTangentAt(t).normalize();
+    const perp = new THREE.Vector3().crossVectors(tangent, UP).normalize();
+
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const lateralDist = side * (5 + Math.random() * 4);
+    const tree = createTreeMesh();
+    const s = 0.8 + Math.random() * 0.5;
+    tree.scale.set(s, s, s);
+    const pos = point.clone().add(perp.clone().multiplyScalar(lateralDist));
+    pos.y = point.y;
+    tree.position.copy(pos);
+    scene.add(tree);
+  }
+
+  // Mountains - large, far from track
+  const mountainMat = new THREE.MeshLambertMaterial({ color: 0x8EA4BE });
+  for (let i = 0; i < 15; i++) {
+    const dist = (i / 15) * trackTotalLength;
+    const t = dist / trackTotalLength;
+    const point = trackSpline.getPointAt(t);
+    const tangent = trackSpline.getTangentAt(t).normalize();
+    const perp = new THREE.Vector3().crossVectors(tangent, UP).normalize();
+
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const lateralDist = side * (60 + Math.random() * 40);
+    const height = 20 + Math.random() * 20;
+    const radius = 10 + Math.random() * 8;
+    const geo = new THREE.ConeGeometry(radius, height, 5 + Math.floor(Math.random() * 2));
+    const mountain = new THREE.Mesh(geo, mountainMat);
+    const pos = point.clone().add(perp.clone().multiplyScalar(lateralDist));
+    pos.y = point.y + height / 2 - 2;
+    mountain.position.copy(pos);
+    mountain.rotation.y = Math.random() * Math.PI;
+    scene.add(mountain);
+  }
+}
+
+placeScenery();
+
+// ============================================================
+//  STATIC OBSTACLES (placed once on track)
+// ============================================================
+
+const OBSTACLE_COUNT = 80;
+let obstacles = [];
+
+function placeObstacles() {
+  obstacles.forEach(o => scene.remove(o.mesh));
+  obstacles = [];
+
+  // Sort obstacles by distance to ensure minimum spacing
+  const obsDists = [];
+  for (let i = 0; i < OBSTACLE_COUNT; i++) {
+    obsDists.push(30 + Math.random() * (trackTotalLength - 60));
+  }
+  obsDists.sort((a, b) => a - b);
+
+  for (let i = 0; i < OBSTACLE_COUNT; i++) {
+    // Enforce minimum gap of 15m between obstacles along track
+    let dist = obsDists[i];
+    if (i > 0 && dist - obsDists[i - 1] < 15) dist = obsDists[i - 1] + 15;
+    obsDists[i] = dist;
+    const lat = (Math.random() - 0.5) * 5;
+    const t = dist / trackTotalLength;
+    const point = trackSpline.getPointAt(t);
+    const tangent = trackSpline.getTangentAt(t).normalize();
+    const perp = new THREE.Vector3().crossVectors(tangent, UP).normalize();
+
+    const isRock = Math.random() < 0.2;
+    const mesh = isRock ? createRockMesh() : createTreeMesh();
+    const worldPos = point.clone().add(perp.clone().multiplyScalar(lat));
+    worldPos.y = point.y;
+    mesh.position.copy(worldPos);
+    scene.add(mesh);
+
+    obstacles.push({
+      mesh: mesh,
+      distAlongTrack: dist,
+      lateralOffset: lat,
+      collisionRadius: isRock ? 0.25 : 0.3
+    });
+  }
+}
+
+// --- Snow particles ---
+const SNOW_COUNT = 150;
+const snowPositions = new Float32Array(SNOW_COUNT * 3);
+const snowVelocities = [];
+
+function initSnow() {
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    snowPositions[i * 3] = (Math.random() - 0.5) * 30;
+    snowPositions[i * 3 + 1] = Math.random() * 15;
+    snowPositions[i * 3 + 2] = (Math.random() - 0.5) * 40;
+    snowVelocities.push({
+      vy: 0.02 + Math.random() * 0.03,
+      vx: (Math.random() - 0.5) * 0.01
+    });
+  }
+}
+
+initSnow();
+const snowGeo = new THREE.BufferGeometry();
+snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+const snowMat = new THREE.PointsMaterial({
+  color: 0xFFFFFF,
+  size: 0.12,
+  transparent: true,
+  opacity: 0.8,
+  sizeAttenuation: true
+});
+const snowParticles = new THREE.Points(snowGeo, snowMat);
+scene.add(snowParticles);
+
+// ============================================================
+//  HUSKY SLED (Player)
+// ============================================================
+
+const sledGroup = new THREE.Group();
+const metalMat = new THREE.MeshLambertMaterial({ color: 0x3A3A3A });
+const bagMat = new THREE.MeshLambertMaterial({ color: 0x2A2A2A });
+const runnerMat = new THREE.MeshLambertMaterial({ color: 0x4A4A4A });
+
+// --- Runners: two long thin bars along the ground ---
+for (const xOff of [-0.35, 0.35]) {
+  // Main runner bar
+  const runnerGeo = new THREE.BoxGeometry(0.04, 0.03, 1.4);
+  const runner = new THREE.Mesh(runnerGeo, runnerMat);
+  runner.position.set(xOff, 0.015, 0);
+  sledGroup.add(runner);
+  // Front upturn (curved brush bow area)
+  const upturnGeo = new THREE.BoxGeometry(0.04, 0.03, 0.2);
+  const upturn = new THREE.Mesh(upturnGeo, runnerMat);
+  upturn.position.set(xOff, 0.06, -0.7);
+  upturn.rotation.x = -0.5;
+  sledGroup.add(upturn);
+}
+
+// --- Stanchions: vertical supports connecting runners to basket ---
+for (const xOff of [-0.35, 0.35]) {
+  for (const zOff of [-0.3, 0.1, 0.5]) {
+    const stanchionGeo = new THREE.BoxGeometry(0.025, 0.15, 0.025);
+    const stanchion = new THREE.Mesh(stanchionGeo, metalMat);
+    stanchion.position.set(xOff, 0.1, zOff);
+    sledGroup.add(stanchion);
+  }
+}
+
+// --- Basket/bag: tapered body, wider at back, narrower at front ---
+// Back panel (wider, taller)
+const backGeo = new THREE.BoxGeometry(0.7, 0.25, 0.04);
+const back = new THREE.Mesh(backGeo, bagMat);
+back.position.set(0, 0.2, 0.6);
+sledGroup.add(back);
+
+// Front panel (narrower, shorter)
+const frontGeo = new THREE.BoxGeometry(0.5, 0.15, 0.04);
+const front = new THREE.Mesh(frontGeo, bagMat);
+front.position.set(0, 0.15, -0.4);
+sledGroup.add(front);
+
+// Side panels (angled to create taper)
+for (const side of [-1, 1]) {
+  const sideGeo = new THREE.BoxGeometry(0.04, 0.2, 1.0);
+  const sidePanel = new THREE.Mesh(sideGeo, bagMat);
+  const xBack = side * 0.35;
+  const xFront = side * 0.25;
+  sidePanel.position.set((xBack + xFront) / 2, 0.18, 0.1);
+  // Slight rotation to create the taper
+  sidePanel.rotation.y = side * 0.05;
+  sledGroup.add(sidePanel);
+}
+
+// Bottom of basket
+const bottomGeo = new THREE.BoxGeometry(0.6, 0.03, 1.0);
+const bottom = new THREE.Mesh(bottomGeo, bagMat);
+bottom.position.set(0, 0.08, 0.1);
+sledGroup.add(bottom);
+
+// --- Handlebar: inverted U at the back ---
+// Left post
+const postGeo = new THREE.BoxGeometry(0.03, 0.5, 0.03);
+const leftPost = new THREE.Mesh(postGeo, metalMat);
+leftPost.position.set(-0.3, 0.45, 0.65);
+sledGroup.add(leftPost);
+// Right post
+const rightPost = new THREE.Mesh(postGeo.clone(), metalMat);
+rightPost.position.set(0.3, 0.45, 0.65);
+sledGroup.add(rightPost);
+// Top bar connecting posts
+const topBarGeo = new THREE.BoxGeometry(0.6, 0.03, 0.03);
+const topBar = new THREE.Mesh(topBarGeo, metalMat);
+topBar.position.set(0, 0.7, 0.65);
+sledGroup.add(topBar);
+
+// --- Musher (low-poly person standing on runners) ---
+const musherCoatMat = new THREE.MeshLambertMaterial({ color: 0x2A3040 });
+const musherSkinMat = new THREE.MeshLambertMaterial({ color: 0xD4A080 });
+const musherBootMat = new THREE.MeshLambertMaterial({ color: 0x3A2A1A });
+const musherHatMat  = new THREE.MeshLambertMaterial({ color: 0x1A1A2A });
+
+// Head
+const musherHead = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), musherSkinMat);
+musherHead.position.set(0, 1.22, 0.80);
+sledGroup.add(musherHead);
+// Hat
+const musherHat = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.08, 8), musherHatMat);
+musherHat.position.set(0, 1.30, 0.80);
+sledGroup.add(musherHat);
+// Torso
+const musherTorso = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.35, 0.18), musherCoatMat);
+musherTorso.position.set(0, 0.92, 0.80);
+sledGroup.add(musherTorso);
+// Left upper arm
+const musherLUA = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.22, 0.07), musherCoatMat);
+musherLUA.position.set(-0.19, 0.88, 0.75);
+sledGroup.add(musherLUA);
+// Right upper arm
+const musherRUA = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.22, 0.07), musherCoatMat);
+musherRUA.position.set(0.19, 0.88, 0.75);
+sledGroup.add(musherRUA);
+// Left forearm
+const musherLFA = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.06), musherCoatMat);
+musherLFA.position.set(-0.25, 0.78, 0.68);
+sledGroup.add(musherLFA);
+// Right forearm
+const musherRFA = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.06), musherCoatMat);
+musherRFA.position.set(0.25, 0.78, 0.68);
+sledGroup.add(musherRFA);
+// Left hand
+const musherLH = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), musherSkinMat);
+musherLH.position.set(-0.28, 0.70, 0.65);
+sledGroup.add(musherLH);
+// Right hand
+const musherRH = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), musherSkinMat);
+musherRH.position.set(0.28, 0.70, 0.65);
+sledGroup.add(musherRH);
+// Left leg
+const musherLL = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.40, 0.10), musherCoatMat);
+musherLL.position.set(-0.08, 0.45, 0.85);
+sledGroup.add(musherLL);
+// Right leg
+const musherRL = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.40, 0.10), musherCoatMat);
+musherRL.position.set(0.08, 0.45, 0.85);
+sledGroup.add(musherRL);
+// Left boot
+const musherLB = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.16), musherBootMat);
+musherLB.position.set(-0.08, 0.08, 0.83);
+sledGroup.add(musherLB);
+// Right boot
+const musherRB = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.16), musherBootMat);
+musherRB.position.set(0.08, 0.08, 0.83);
+sledGroup.add(musherRB);
+
+// --- Front brush bow: curved bar at the front ---
+const brushBowGeo = new THREE.TorusGeometry(0.3, 0.02, 6, 8, Math.PI);
+const brushBow = new THREE.Mesh(brushBowGeo, metalMat);
+brushBow.position.set(0, 0.12, -0.65);
+brushBow.rotation.x = Math.PI / 2;
+brushBow.rotation.z = Math.PI;
+sledGroup.add(brushBow);
+
+// --- 8-Husky team in 4 pairs (Iditarod formation) ---
+const dogMats = {
+  body: new THREE.MeshLambertMaterial({ color: 0xA0A0A8 }),
+  head: new THREE.MeshLambertMaterial({ color: 0xC0C0C8 }),
+  ears: new THREE.MeshLambertMaterial({ color: 0x707078 }),
+  tail: new THREE.MeshLambertMaterial({ color: 0xA0A0A8 }),
+  legs: new THREE.MeshLambertMaterial({ color: 0x909098 }),
+  harness: new THREE.MeshLambertMaterial({ color: 0x5C3A1E })
+};
+
+const allDogLegs = []; // array of { legs: [4 meshes], phaseOffset: number }
+const allDogTails = [];
+const allDogBodies = []; // body meshes for spine flex
+const allDogHeads = []; // head meshes for bob
+const allDogGroups = []; // dog groups for sway and lateral drift
+
+function createHusky(phaseOffset) {
+  const dog = new THREE.Group();
+
+  // Body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.4), dogMats.body);
+  body.position.y = 0.25;
+  dog.add(body);
+  allDogBodies.push(body);
+
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), dogMats.head);
+  head.position.set(0, 0.34, -0.25);
+  dog.add(head);
+  allDogHeads.push(head);
+
+  // Ears
+  for (const xOff of [-0.06, 0.06]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 4), dogMats.ears);
+    ear.position.set(xOff, 0.48, -0.25);
+    dog.add(ear);
+  }
+
+  // Tail
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.12, 4), dogMats.tail);
+  tail.position.set(0, 0.38, 0.18);
+  tail.rotation.x = -0.6;
+  dog.add(tail);
+  allDogTails.push(tail);
+
+  // Legs
+  const legs = [];
+  const legPos = [
+    [-0.08, 0.06, -0.12],
+    [0.08, 0.06, -0.12],
+    [-0.08, 0.06, 0.12],
+    [0.08, 0.06, 0.12]
+  ];
+  legPos.forEach(([lx, ly, lz]) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.05), dogMats.legs);
+    leg.position.set(lx, ly, lz);
+    dog.add(leg);
+    legs.push(leg);
+  });
+  allDogLegs.push({ legs, phaseOffset });
+  allDogGroups.push({ group: dog, phaseOffset, baseX: 0 });
+
+  return dog;
+}
+
+// --- Dog Team Group (separate from sled, player-steered) ---
+const dogTeamGroup = new THREE.Group();
+const dogPositions = [
+  { x: -0.3, z: -1.8, phase: 0 },      // lead pair
+  { x:  0.3, z: -1.8, phase: 0.7 },
+  { x: -0.3, z: -1.2, phase: 1.4 },    // swing pair
+  { x:  0.3, z: -1.2, phase: 2.1 },
+  { x: -0.3, z: -0.6, phase: 0.5 },    // team pair
+  { x:  0.3, z: -0.6, phase: 1.2 },
+  { x: -0.3, z:  0.0, phase: 1.9 },    // wheel pair (closest to sled)
+  { x:  0.3, z:  0.0, phase: 2.6 }
+];
+
+dogPositions.forEach(({ x, z, phase }, idx) => {
+  const husky = createHusky(phase);
+  husky.position.set(x, 0, z);
+  dogTeamGroup.add(husky);
+  allDogGroups[idx].baseX = x;
+});
+
+// Internal harness lines within dog team
+const attachZ = 0.3; // attachment point behind wheel pair
+dogPositions.forEach(({ x, z }) => {
+  const dx = x;
+  const dz = z - attachZ;
+  const length = Math.sqrt(dx * dx + dz * dz);
+  const angle = Math.atan2(dx, dz);
+  const harnessLine = new THREE.Mesh(
+    new THREE.BoxGeometry(0.015, 0.015, length),
+    dogMats.harness
+  );
+  harnessLine.position.set(x / 2, 0.18, (z + attachZ) / 2);
+  harnessLine.rotation.y = -angle;
+  dogTeamGroup.add(harnessLine);
+});
+
+// Dynamic gangline connecting dog team rear to sled brush bow
+const ganglineGeo = new THREE.BufferGeometry();
+ganglineGeo.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, 0,0,0], 3));
+const ganglineMat = new THREE.LineBasicMaterial({ color: 0x5C3A1E });
+const gangline = new THREE.Line(ganglineGeo, ganglineMat);
+scene.add(gangline);
+
+dogTeamGroup.position.set(0, 0.05, 0);
+scene.add(dogTeamGroup);
+sledGroup.position.set(0, 0.05, 0);
+scene.add(sledGroup);
+
+// ============================================================
+//  CHASE CAMERA
+// ============================================================
+
+const camLookAt = new THREE.Vector3();
+let camInitialized = false;
+
+function updateCamera() {
+  if (gameState === STATE.TITLE) return; // title has its own camera
+
+  // Camera follows behind sled, looking toward dog team
+  const sledT = (((distanceAlongTrack - TETHER_LENGTH) % trackTotalLength + trackTotalLength) % trackTotalLength) / trackTotalLength;
+  const sledTangent = trackSpline.getTangentAt(sledT).normalize();
+
+  const targetCamPos = sledGroup.position.clone()
+    .sub(sledTangent.clone().multiplyScalar(8))
+    .add(new THREE.Vector3(0, 4, 0));
+
+  // Look toward the dog team ahead
+  const targetLookAt = dogTeamGroup.position.clone()
+    .add(new THREE.Vector3(0, 1, 0));
+
+  if (!camInitialized) {
+    camera.position.copy(targetCamPos);
+    camLookAt.copy(targetLookAt);
+    camInitialized = true;
+  } else {
+    camera.position.lerp(targetCamPos, 0.06);
+    camLookAt.lerp(targetLookAt, 0.06);
+  }
+  camera.lookAt(camLookAt);
+}
+
+// ============================================================
+//  MINIMAP (full circuit)
+// ============================================================
+
+const MINIMAP_SAMPLES = 400;
+let minimapPath = [];
+let minimapBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+let minimapElevBounds = { minY: Infinity, maxY: -Infinity };
+
+function computeMinimapPath() {
+  minimapPath = [];
+  minimapBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+  minimapElevBounds = { minY: Infinity, maxY: -Infinity };
+  for (let i = 0; i < MINIMAP_SAMPLES; i++) {
+    const t = i / MINIMAP_SAMPLES;
+    const p = trackSpline.getPointAt(t);
+    minimapPath.push({ x: p.x, z: p.z, y: p.y });
+    minimapBounds.minX = Math.min(minimapBounds.minX, p.x);
+    minimapBounds.maxX = Math.max(minimapBounds.maxX, p.x);
+    minimapBounds.minZ = Math.min(minimapBounds.minZ, p.z);
+    minimapBounds.maxZ = Math.max(minimapBounds.maxZ, p.z);
+    minimapElevBounds.minY = Math.min(minimapElevBounds.minY, p.y);
+    minimapElevBounds.maxY = Math.max(minimapElevBounds.maxY, p.y);
+  }
+}
+
+computeMinimapPath();
+
+// --- Pre-rendered topographic background ---
+const topoCanvas = document.createElement('canvas');
+topoCanvas.width = 210;
+topoCanvas.height = 210;
+const topoCtx = topoCanvas.getContext('2d');
+
+// Minimap coordinate helpers (shared)
+const MINIMAP_W = 210, MINIMAP_H = 210, MINIMAP_PAD = 18;
+let mmScale, mmOffX, mmOffZ;
+
+function computeMinimapTransform() {
+  const rangeX = minimapBounds.maxX - minimapBounds.minX;
+  const rangeZ = minimapBounds.maxZ - minimapBounds.minZ;
+  mmScale = Math.min((MINIMAP_W - MINIMAP_PAD * 2) / rangeX, (MINIMAP_H - MINIMAP_PAD * 2) / rangeZ);
+  mmOffX = (MINIMAP_W - rangeX * mmScale) / 2;
+  mmOffZ = (MINIMAP_H - rangeZ * mmScale) / 2;
+}
+
+function toMinimap(wx, wz) {
+  return {
+    x: (wx - minimapBounds.minX) * mmScale + mmOffX,
+    y: (wz - minimapBounds.minZ) * mmScale + mmOffZ
+  };
+}
+
+function preRenderTopoBackground() {
+  computeMinimapTransform();
+
+  const w = MINIMAP_W, h = MINIMAP_H;
+  const ctx = topoCtx;
+
+  // --- 1. Build elevation grid via IDW from track samples ---
+  const GRID_RES = 80;
+  const elevGrid = new Float32Array(GRID_RES * GRID_RES);
+
+  // Dense track samples for elevation interpolation
+  const ELEV_SAMPLES = 800;
+  const trackSamples = [];
+  for (let i = 0; i < ELEV_SAMPLES; i++) {
+    const t = i / ELEV_SAMPLES;
+    const p = trackSpline.getPointAt(t);
+    const mp = toMinimap(p.x, p.z);
+    trackSamples.push({ mx: mp.x, my: mp.y, elev: p.y });
+  }
+
+  // Cell size mapping grid coords to pixel coords
+  const cellW = w / GRID_RES;
+  const cellH = h / GRID_RES;
+
+  // IDW interpolation to fill the elevation grid
+  const INFLUENCE_RADIUS = 90;
+  const INF_SQ = INFLUENCE_RADIUS * INFLUENCE_RADIUS;
+
+  for (let gy = 0; gy < GRID_RES; gy++) {
+    for (let gx = 0; gx < GRID_RES; gx++) {
+      const px = (gx + 0.5) * cellW;
+      const py = (gy + 0.5) * cellH;
+      let wSum = 0, eSum = 0;
+
+      for (let s = 0; s < ELEV_SAMPLES; s += 2) {
+        const dx = px - trackSamples[s].mx;
+        const dy = py - trackSamples[s].my;
+        const dSq = dx * dx + dy * dy;
+        if (dSq > INF_SQ) continue;
+        const d = Math.sqrt(dSq) + 0.5;
+        const wt = 1 / (d * d);
+        wSum += wt;
+        eSum += trackSamples[s].elev * wt;
+      }
+
+      const idx = gy * GRID_RES + gx;
+      if (wSum > 0) {
+        elevGrid[idx] = eSum / wSum;
+      } else {
+        elevGrid[idx] = (minimapElevBounds.minY + minimapElevBounds.maxY) * 0.5;
+      }
+    }
+  }
+
+  // --- 2. Sage-green background fill ---
+  ctx.fillStyle = '#D4DCC0';
+  ctx.fillRect(0, 0, w, h);
+
+  // --- 3. Subtle grid pattern ---
+  ctx.strokeStyle = 'rgba(100, 140, 100, 0.15)';
+  ctx.lineWidth = 0.5;
+  const gridSpacing = 10;
+  for (let x = gridSpacing; x < w; x += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = gridSpacing; y < h; y += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  // --- 4. Marching squares contour lines ---
+  const elevMin = minimapElevBounds.minY;
+  const elevMax = minimapElevBounds.maxY;
+  const elevRange = elevMax - elevMin || 1;
+
+  // Choose contour interval: aim for ~8-15 contour levels
+  const CONTOUR_INTERVAL = Math.max(0.3, elevRange / 12);
+  const MAJOR_EVERY = 4; // every 4th contour is major
+
+  const contourLevels = [];
+  for (let elev = elevMin + CONTOUR_INTERVAL; elev < elevMax; elev += CONTOUR_INTERVAL) {
+    contourLevels.push(elev);
+  }
+
+  // Marching squares edge table: for each of 16 cases, list of edge pairs
+  // Edges: 0=top, 1=right, 2=bottom, 3=left
+  const MS_EDGES = [
+    [],           // 0000
+    [[3, 2]],     // 0001
+    [[2, 1]],     // 0010
+    [[3, 1]],     // 0011
+    [[1, 0]],     // 0100
+    [[1, 0], [3, 2]], // 0101 (ambiguous - saddle)
+    [[2, 0]],     // 0110
+    [[3, 0]],     // 0111
+    [[0, 3]],     // 1000
+    [[0, 2]],     // 1001
+    [[0, 1], [2, 3]], // 1010 (ambiguous - saddle)
+    [[0, 1]],     // 1011
+    [[1, 3]],     // 1100
+    [[1, 2]],     // 1101
+    [[2, 3]],     // 1110
+    []            // 1111
+  ];
+
+  // Get interpolated point on a cell edge
+  function edgePoint(gx, gy, edge, level) {
+    const v00 = elevGrid[gy * GRID_RES + gx];
+    const v10 = (gx + 1 < GRID_RES) ? elevGrid[gy * GRID_RES + gx + 1] : v00;
+    const v01 = (gy + 1 < GRID_RES) ? elevGrid[(gy + 1) * GRID_RES + gx] : v00;
+    const v11 = (gx + 1 < GRID_RES && gy + 1 < GRID_RES) ? elevGrid[(gy + 1) * GRID_RES + gx + 1] : v00;
+
+    let t, px, py;
+    switch (edge) {
+      case 0: // top edge (y=gy), interpolate x between gx and gx+1
+        t = (v10 === v00) ? 0.5 : (level - v00) / (v10 - v00);
+        px = (gx + t + 0.5) * cellW;
+        py = (gy + 0.5) * cellH;
+        break;
+      case 1: // right edge (x=gx+1), interpolate y between gy and gy+1
+        t = (v11 === v10) ? 0.5 : (level - v10) / (v11 - v10);
+        px = (gx + 1 + 0.5) * cellW;
+        py = (gy + t + 0.5) * cellH;
+        break;
+      case 2: // bottom edge (y=gy+1), interpolate x between gx and gx+1
+        t = (v11 === v01) ? 0.5 : (level - v01) / (v11 - v01);
+        px = (gx + t + 0.5) * cellW;
+        py = (gy + 1 + 0.5) * cellH;
+        break;
+      case 3: // left edge (x=gx), interpolate y between gy and gy+1
+        t = (v01 === v00) ? 0.5 : (level - v00) / (v01 - v00);
+        px = (gx + 0.5) * cellW;
+        py = (gy + t + 0.5) * cellH;
+        break;
+    }
+    return { x: px, y: py };
+  }
+
+  // Draw contour lines using marching squares
+  contourLevels.forEach((level, li) => {
+    const isMajor = (li % MAJOR_EVERY === 0);
+    ctx.strokeStyle = isMajor ? '#6B4E2A' : '#A08050';
+    ctx.lineWidth = isMajor ? 1.0 : 0.5;
+    ctx.lineCap = 'round';
+
+    // Collect all line segments for this level
+    const segments = [];
+
+    for (let gy = 0; gy < GRID_RES - 1; gy++) {
+      for (let gx = 0; gx < GRID_RES - 1; gx++) {
+        const v00 = elevGrid[gy * GRID_RES + gx];
+        const v10 = elevGrid[gy * GRID_RES + gx + 1];
+        const v01 = elevGrid[(gy + 1) * GRID_RES + gx];
+        const v11 = elevGrid[(gy + 1) * GRID_RES + gx + 1];
+
+        // Determine case index (which corners are above the level)
+        let caseIdx = 0;
+        if (v00 >= level) caseIdx |= 8;
+        if (v10 >= level) caseIdx |= 4;
+        if (v11 >= level) caseIdx |= 2;
+        if (v01 >= level) caseIdx |= 1;
+
+        const edges = MS_EDGES[caseIdx];
+        if (!edges || edges.length === 0) continue;
+
+        for (const [e1, e2] of edges) {
+          const p1 = edgePoint(gx, gy, e1, level);
+          const p2 = edgePoint(gx, gy, e2, level);
+          segments.push(p1, p2);
+        }
+      }
+    }
+
+    // Draw all segments for this contour level in one path
+    ctx.beginPath();
+    for (let i = 0; i < segments.length; i += 2) {
+      ctx.moveTo(segments[i].x, segments[i].y);
+      ctx.lineTo(segments[i + 1].x, segments[i + 1].y);
+    }
+    ctx.stroke();
+  });
+
+  // --- 5. Track path as bold dark brown line ---
+  ctx.strokeStyle = '#2A1A0A';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  minimapPath.forEach((p, i) => {
+    const mp = toMinimap(p.x, p.z);
+    if (i === 0) ctx.moveTo(mp.x, mp.y);
+    else ctx.lineTo(mp.x, mp.y);
+  });
+  ctx.closePath();
+  ctx.stroke();
+
+  // Thinner center line for road emphasis
+  ctx.strokeStyle = '#3D2A14';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  minimapPath.forEach((p, i) => {
+    const mp = toMinimap(p.x, p.z);
+    if (i === 0) ctx.moveTo(mp.x, mp.y);
+    else ctx.lineTo(mp.x, mp.y);
+  });
+  ctx.closePath();
+  ctx.stroke();
+
+  // --- 6. Start/finish marker ---
+  const startMP = toMinimap(minimapPath[0].x, minimapPath[0].z);
+  ctx.fillStyle = '#2A1A0A';
+  ctx.font = 'bold 7px monospace';
+  ctx.fillText('S', startMP.x - 3, startMP.y - 6);
+}
+
+preRenderTopoBackground();
+
+function drawMinimap() {
+  const ctx = minimapCtx;
+
+  // Blit pre-rendered topo background
+  ctx.drawImage(topoCanvas, 0, 0);
+
+  // Draw obstacles (small red dots)
+  ctx.fillStyle = 'rgba(180, 50, 40, 0.6)';
+  obstacles.forEach(obs => {
+    const mp = toMinimap(obs.mesh.position.x, obs.mesh.position.z);
+    ctx.beginPath();
+    ctx.arc(mp.x, mp.y, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Draw sled (darker dot behind dogs)
+  const sledMP = toMinimap(sledGroup.position.x, sledGroup.position.z);
+  ctx.fillStyle = '#1A5A22';
+  ctx.beginPath();
+  ctx.arc(sledMP.x, sledMP.y, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Draw dog team (bright green glowing dot)
+  const dogMP = toMinimap(dogTeamGroup.position.x, dogTeamGroup.position.z);
+  ctx.fillStyle = '#2E8B3A';
+  ctx.shadowColor = '#2E8B3A';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(dogMP.x, dogMP.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Direction indicator along track tangent
+  const t = distanceAlongTrack / trackTotalLength;
+  const tangent = trackSpline.getTangentAt(t).normalize();
+  ctx.strokeStyle = '#2E8B3A';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(dogMP.x, dogMP.y);
+  ctx.lineTo(dogMP.x + tangent.x * mmScale * 8, dogMP.y + tangent.z * mmScale * 8);
+  ctx.stroke();
+}
+
+// ============================================================
+//  GAME LOGIC
+// ============================================================
+
+function startGame() {
+  gameState = STATE.PLAYING;
+  speed = baseSpeed;
+  elapsedTime = 0;
+  distanceAlongTrack = 0;
+  lateralOffset = 0;
+  lateralVelocity = 0;
+  steerAngle = 0;
+  sledRoll = 0;
+  sledPitch = 0;
+  prevLateralVelocity = 0;
+  sledLateralOffset = 0;
+  sledLateralVelocity = 0;
+  hitCount = 0;
+  hitCooldown = 0;
+  currentLap = 1;
+  lapTime = 0;
+  bestLapTime = Infinity;
+  totalRaceTime = 0;
+  camInitialized = false;
+
+  // Position dog team at start
+  const startPoint = trackSpline.getPointAt(0);
+  dogTeamGroup.position.copy(startPoint);
+
+  // Position sled behind dogs along track
+  const sledStartT = ((trackTotalLength - TETHER_LENGTH) % trackTotalLength) / trackTotalLength;
+  const sledStartPoint = trackSpline.getPointAt(sledStartT);
+  sledGroup.position.copy(sledStartPoint);
+  snowInitializedToSled = false;
+
+  // Place obstacles fresh
+  placeObstacles();
+
+  // UI
+  overlay.classList.add('hidden');
+  overlay.classList.remove('dimmed');
+  scoreDisplay.classList.remove('hidden');
+  scoreDisplay.textContent = 'Lap 1/' + TOTAL_LAPS + ' | 00:00.00';
+  minimapCanvas.style.display = 'block';
+
+  startAudioLoop();
+}
+
+function endGame() {
+  gameState = STATE.GAME_OVER;
+  stopAudioLoop();
+
+  const raceComplete = currentLap > TOTAL_LAPS;
+
+  overlay.classList.remove('hidden');
+  overlay.classList.add('dimmed');
+  overlayTitle.textContent = raceComplete ? 'RACE COMPLETE!' : 'CRASHED!';
+  overlayTitle.style.color = raceComplete ? '#4AFF7A' : '#FF8B6B';
+
+  if (raceComplete) {
+    const totalMins = Math.floor(totalRaceTime / 60);
+    const totalSecs = Math.floor(totalRaceTime % 60);
+    const totalMs = Math.floor((totalRaceTime % 1) * 100);
+    overlaySubtitle.textContent = 'Total: ' + String(totalMins).padStart(2, '0') + ':' + String(totalSecs).padStart(2, '0') + '.' + String(totalMs).padStart(2, '0');
+    if (bestLapTime < Infinity) {
+      const bMins = Math.floor(bestLapTime / 60);
+      const bSecs = Math.floor(bestLapTime % 60);
+      const bMs = Math.floor((bestLapTime % 1) * 100);
+      overlayScore.style.display = 'block';
+      overlayScore.textContent = 'Best Lap: ' + String(bMins).padStart(2, '0') + ':' + String(bSecs).padStart(2, '0') + '.' + String(bMs).padStart(2, '0');
+    }
+  } else {
+    overlaySubtitle.textContent = 'Lap ' + currentLap + '/' + TOTAL_LAPS;
+    overlayScore.style.display = 'none';
+  }
+  overlayPrompt.textContent = 'Press SPACE to restart';
+}
+
+function showTitleScreen() {
+  overlay.classList.remove('hidden');
+  overlay.classList.remove('dimmed');
+  overlayTitle.textContent = 'HUSKY SLED';
+  overlayTitle.style.color = '#fff';
+  overlaySubtitle.textContent = '3-Lap Circuit Race';
+  overlayScore.style.display = 'none';
+  overlayPrompt.textContent = 'Press SPACE to start';
+  scoreDisplay.classList.add('hidden');
+  minimapCanvas.style.display = 'none';
+}
+showTitleScreen();
+
+function pauseGame() {
+  gameState = STATE.PAUSED;
+  pauseAudio();
+  clock.stop();
+  overlay.classList.remove('hidden', 'dimmed');
+  overlay.classList.add('paused');
+  overlayTitle.textContent = 'PAUSED';
+  overlayTitle.style.color = '#fff';
+  overlaySubtitle.textContent = '';
+  overlayScore.style.display = 'none';
+  overlayPrompt.textContent = 'Press SPACE to resume';
+}
+
+function resumeGame() {
+  gameState = STATE.PLAYING;
+  resumeAudio();
+  clock.start();
+  overlay.classList.add('hidden');
+  overlay.classList.remove('paused');
+}
+
+// --- Update functions ---
+
+function updatePlaying(delta) {
+  elapsedTime += delta;
+
+  const dt60 = Math.min(delta * 60, 3); // normalize to 60fps, cap for stability
+
+  // --- Slope-based speed: gravity drives momentum ---
+  const tPre = (distanceAlongTrack % trackTotalLength) / trackTotalLength;
+  const tangentPre = trackSpline.getTangentAt(tPre).normalize();
+  const slopeEffect = -tangentPre.y * 3.0; // downhill accelerates, uphill decelerates
+  const dogPull = Math.min(maxSpeed, baseSpeed + elapsedTime * 0.002);
+  const targetSpeed = dogPull + slopeEffect;
+  const prevSpeedVal = speed;
+  speed += (targetSpeed - speed) * Math.min(1, 0.03 * dt60);
+  speed = Math.max(0.08, Math.min(1.0, speed)); // allow downhill bursts past normal max
+
+  // Advance along track
+  distanceAlongTrack += speed * dt60;
+
+  // Check lap completion
+  if (distanceAlongTrack >= trackTotalLength) {
+    distanceAlongTrack -= trackTotalLength;
+    const thisLapTime = lapTime;
+    if (thisLapTime < bestLapTime) bestLapTime = thisLapTime;
+    currentLap++;
+    lapTime = 0;
+    if (currentLap > TOTAL_LAPS) {
+      endGame();
+      return;
+    }
+  }
+
+  // --- Dog team position (player-steered) ---
+  const dogT = (distanceAlongTrack % trackTotalLength) / trackTotalLength;
+  const dogTrackPoint = trackSpline.getPointAt(dogT);
+  const dogTangent = trackSpline.getTangentAt(dogT).normalize();
+  const dogPerp = new THREE.Vector3().crossVectors(dogTangent, UP).normalize();
+
+  // Steering with inertia & drift (controls dogs)
+  let rawSteer = 0;
+  if (keys['ArrowLeft'] || keys['KeyA']) rawSteer = -1;
+  if (keys['ArrowRight'] || keys['KeyD']) rawSteer = 1;
+
+  steerAngle += (rawSteer - steerAngle) * Math.min(1, 0.20 * dt60);
+  const turnRate = 0.035 / (1.0 + speed * 1.2);
+  prevLateralVelocity = lateralVelocity;
+  lateralVelocity += steerAngle * turnRate * dt60;
+  lateralVelocity *= Math.pow(0.96, dt60);
+  lateralOffset += lateralVelocity * dt60;
+
+  if (lateralOffset < -3.5) { lateralOffset = -3.5; lateralVelocity *= -0.3; }
+  if (lateralOffset > 3.5) { lateralOffset = 3.5; lateralVelocity *= -0.3; }
+
+  // Position and orient dog team
+  const dogPos = dogTrackPoint.clone().add(dogPerp.clone().multiplyScalar(lateralOffset));
+  dogTeamGroup.position.copy(dogPos);
+  const dogLookTarget = dogTrackPoint.clone().add(dogTangent.clone().multiplyScalar(5));
+  dogLookTarget.y = dogPos.y + (dogLookTarget.y - dogPos.y) * 0.5;
+  dogTeamGroup.lookAt(dogLookTarget);
+  dogTeamGroup.rotateY(Math.PI);
+
+  // --- Sled position (follows dogs on tether) ---
+  const sledDist = ((distanceAlongTrack - TETHER_LENGTH) % trackTotalLength + trackTotalLength) % trackTotalLength;
+  const sledT = sledDist / trackTotalLength;
+  const sledTrackPoint = trackSpline.getPointAt(sledT);
+  const sledTangent = trackSpline.getTangentAt(sledT).normalize();
+  const sledPerp = new THREE.Vector3().crossVectors(sledTangent, UP).normalize();
+
+  // Sled lateral: spring-damper following dog lateral offset
+  const lateralDiff = lateralOffset - sledLateralOffset;
+  sledLateralVelocity += lateralDiff * 0.12 * dt60;
+  sledLateralVelocity *= Math.pow(0.88, dt60);
+  sledLateralOffset += sledLateralVelocity * dt60;
+
+  if (sledLateralOffset < -3.5) { sledLateralOffset = -3.5; sledLateralVelocity *= -0.3; }
+  if (sledLateralOffset > 3.5) { sledLateralOffset = 3.5; sledLateralVelocity *= -0.3; }
+
+  // Position and orient sled
+  const sledPos = sledTrackPoint.clone().add(sledPerp.clone().multiplyScalar(sledLateralOffset));
+  sledGroup.position.copy(sledPos);
+  const sledLookTarget = sledTrackPoint.clone().add(sledTangent.clone().multiplyScalar(5));
+  sledLookTarget.y = sledPos.y + (sledLookTarget.y - sledPos.y) * 0.5;
+  sledGroup.lookAt(sledLookTarget);
+  sledGroup.rotateY(Math.PI);
+
+  // --- Suspension: roll & pitch on sled only ---
+  const targetRoll = -sledLateralVelocity * 2.0;
+  sledRoll += (targetRoll - sledRoll) * Math.min(1, 0.08 * dt60);
+  sledRoll = Math.max(-0.15, Math.min(0.15, sledRoll));
+
+  const speedChange = speed - prevSpeedVal;
+  const targetPitch = -speedChange * 5.0;
+  sledPitch += (targetPitch - sledPitch) * Math.min(1, 0.06 * dt60);
+  sledPitch = Math.max(-0.08, Math.min(0.08, sledPitch));
+
+  sledGroup.rotateZ(sledRoll);
+  sledGroup.rotateX(sledPitch);
+
+  // --- Update gangline (dog rear → sled brush bow) ---
+  const gPos = gangline.geometry.attributes.position.array;
+  const dogAttach = new THREE.Vector3(0, 0.18, 0.3);
+  dogTeamGroup.localToWorld(dogAttach);
+  const sledAttach = new THREE.Vector3(0, 0.12, -0.65);
+  sledGroup.localToWorld(sledAttach);
+  gPos[0] = dogAttach.x; gPos[1] = dogAttach.y; gPos[2] = dogAttach.z;
+  gPos[3] = sledAttach.x; gPos[4] = sledAttach.y; gPos[5] = sledAttach.z;
+  gangline.geometry.attributes.position.needsUpdate = true;
+
+  // Lap timer
+  lapTime += delta;
+  totalRaceTime += delta;
+
+  // HUD
+  const mins = Math.floor(lapTime / 60);
+  const secs = Math.floor(lapTime % 60);
+  const ms = Math.floor((lapTime % 1) * 100);
+  const hearts = '\u2764'.repeat(MAX_HITS - hitCount) + '\u2661'.repeat(hitCount);
+  scoreDisplay.textContent = hearts + '  Lap ' + currentLap + '/' + TOTAL_LAPS + ' | ' + String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0') + '.' + String(ms).padStart(2, '0');
+
+  // Dog leg animation (each dog has its own phase offset)
+  const basePhase = elapsedTime * speed * 8;
+  allDogLegs.forEach(({ legs, phaseOffset }) => {
+    const p = basePhase + phaseOffset;
+    legs[0].rotation.x = Math.sin(p) * 0.5;
+    legs[1].rotation.x = Math.sin(p + Math.PI) * 0.5;
+    legs[2].rotation.x = Math.sin(p + Math.PI) * 0.5;
+    legs[3].rotation.x = Math.sin(p) * 0.5;
+  });
+
+  // Tail wag (all dogs, slightly offset, loose and fast)
+  allDogTails.forEach((t, i) => {
+    t.rotation.z = Math.sin(elapsedTime * 8 + i * 1.2) * 0.5;
+    t.rotation.y = Math.sin(elapsedTime * 6 + i * 0.9) * 0.2;
+  });
+
+  // Fluid dog animation: body sway, head bob, spine flex, lateral drift
+  allDogGroups.forEach(({ group, phaseOffset, baseX }, i) => {
+    const p = basePhase + phaseOffset;
+    // Body sway (subtle Y-axis rotation tied to stride)
+    group.rotation.y = Math.sin(p * 0.5) * 0.06;
+    // Vertical bounce with stride
+    group.position.y = Math.abs(Math.sin(p)) * 0.03;
+    // Lateral drift (each dog weaves slightly, unique frequency)
+    group.position.x = baseX + Math.sin(elapsedTime * (1.2 + i * 0.15) + phaseOffset) * 0.04;
+  });
+  allDogBodies.forEach((body, i) => {
+    const p = basePhase + allDogLegs[i].phaseOffset;
+    // Spine flex: compress/stretch along Z
+    body.scale.z = 1.0 + Math.sin(p) * 0.08;
+    body.scale.y = 1.0 - Math.sin(p) * 0.04;
+  });
+  allDogHeads.forEach((head, i) => {
+    const p = basePhase + allDogLegs[i].phaseOffset;
+    // Head bob
+    head.position.y = 0.34 + Math.sin(p * 2) * 0.025;
+    // Slight head tilt
+    head.rotation.z = Math.sin(p * 0.7 + i) * 0.05;
+  });
+
+  // Collision check -- 3 hits before game over, with brief invulnerability
+  hitCooldown = Math.max(0, hitCooldown - delta);
+  const sledRadius = 0.5;
+  const dogRadius = 0.4;
+  if (hitCooldown <= 0) {
+    for (const obs of obstacles) {
+      let trackDist = Math.abs(obs.distAlongTrack - distanceAlongTrack);
+      if (trackDist > trackTotalLength / 2) trackDist = trackTotalLength - trackDist;
+      if (trackDist > 20) continue;
+
+      const ox = obs.mesh.position.x, oy = obs.mesh.position.y, oz = obs.mesh.position.z;
+      let hit = false;
+
+      const sdx = sledGroup.position.x - ox, sdy = sledGroup.position.y - oy, sdz = sledGroup.position.z - oz;
+      if (Math.sqrt(sdx*sdx + sdy*sdy + sdz*sdz) < sledRadius + obs.collisionRadius) hit = true;
+
+      if (!hit) {
+        const ddx = dogTeamGroup.position.x - ox, ddy = dogTeamGroup.position.y - oy, ddz = dogTeamGroup.position.z - oz;
+        if (Math.sqrt(ddx*ddx + ddy*ddy + ddz*ddz) < dogRadius + obs.collisionRadius) hit = true;
+      }
+
+      if (hit) {
+        hitCount++;
+        hitCooldown = 1.5; // 1.5s invulnerability
+        playCollisionSound();
+        speed *= 0.5; // slow down on hit
+        if (hitCount >= MAX_HITS) { endGame(); return; }
+        // Flash HUD to show damage
+        scoreDisplay.style.color = '#FF6B6B';
+        setTimeout(() => { scoreDisplay.style.color = '#fff'; }, 300);
+        break;
+      }
+    }
+  }
+}
+
+const prevSledPos = new THREE.Vector3();
+let snowInitializedToSled = false;
+
+function updateSnow() {
+  const positions = snowGeo.attributes.position.array;
+  const sx = sledGroup.position.x, sy = sledGroup.position.y, sz = sledGroup.position.z;
+
+  // Shift all snow particles by sled movement delta so they follow the sled through the world
+  if (snowInitializedToSled) {
+    const dx = sx - prevSledPos.x;
+    const dy = sy - prevSledPos.y;
+    const dz = sz - prevSledPos.z;
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      positions[i * 3] += dx;
+      positions[i * 3 + 1] += dy;
+      positions[i * 3 + 2] += dz;
+    }
+  } else {
+    // First call: center snow around sled
+    for (let i = 0; i < SNOW_COUNT; i++) {
+      positions[i * 3] = sx + (Math.random() - 0.5) * 30;
+      positions[i * 3 + 1] = sy + Math.random() * 15;
+      positions[i * 3 + 2] = sz + (Math.random() - 0.5) * 30;
+    }
+    snowInitializedToSled = true;
+  }
+  prevSledPos.set(sx, sy, sz);
+
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    const vel = snowVelocities[i];
+    positions[i * 3] += vel.vx;
+    positions[i * 3 + 1] -= vel.vy;
+
+    if (positions[i * 3 + 1] < sy - 2) {
+      positions[i * 3] = sx + (Math.random() - 0.5) * 30;
+      positions[i * 3 + 1] = sy + 12 + Math.random() * 3;
+      positions[i * 3 + 2] = sz + (Math.random() - 0.5) * 30;
+    }
+  }
+  snowGeo.attributes.position.needsUpdate = true;
+}
+
+function updateTitleAnimation() {
+  const titleTime = clock.getElapsedTime();
+  const t = (titleTime * 0.01) % 1;
+  const point = trackSpline.getPointAt(t);
+  const tangent = trackSpline.getTangentAt(t).normalize();
+  camera.position.set(point.x - tangent.x * 15, point.y + 20, point.z - tangent.z * 15);
+  camera.lookAt(point);
+}
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+
+  switch (gameState) {
+    case STATE.TITLE:
+      updateTitleAnimation();
+      updateSnow();
+      break;
+    case STATE.PLAYING:
+      updatePlaying(delta);
+      updateSnow();
+      drawMinimap();
+      break;
+    case STATE.PAUSED:
+      // No updates -- everything frozen, just render
+      break;
+    case STATE.GAME_OVER:
+      updateSnow();
+      drawMinimap();
+      break;
+  }
+
+  // Aurora sky dome drift
+  skyDome.rotation.y += delta * 0.015;
+
+  // Keep sky dome, stars, and aurora centered on camera so edges are never visible
+  skyDome.position.copy(camera.position);
+  stars.position.copy(camera.position);
+
+  if (gameState !== STATE.TITLE) {
+    updateCamera();
+  }
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
